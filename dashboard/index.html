@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>City-Wide ANPR Traffic Analytics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0b0f14; --panel:#121822; --border:#232c39; --text:#e8edf3; --muted:#8a97a8;
+          --accent:#4fc3f7; --heavy:#ef5350; --moderate:#ffb74d; --light:#66bb6a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:20px 28px; border-bottom:1px solid var(--border); }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  .grid { display:grid; grid-template-columns: 1.3fr 1fr; gap:18px; padding:20px 28px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px; }
+  .panel h2 { margin:0 0 12px; font-size:14px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:500; }
+  .badge { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .heavy { background:rgba(239,83,80,.15); color:var(--heavy); }
+  .moderate { background:rgba(255,183,77,.15); color:var(--moderate); }
+  .light { background:rgba(102,187,106,.15); color:var(--light); }
+  .searchbar { display:flex; gap:8px; margin-bottom:14px; }
+  input { flex:1; background:#0d1218; border:1px solid var(--border); color:var(--text);
+          padding:9px 12px; border-radius:8px; font-size:13px; }
+  button { background:var(--accent); border:none; color:#04202b; font-weight:600;
+           padding:9px 16px; border-radius:8px; cursor:pointer; font-size:13px; }
+  #trajResult { margin-top:14px; font-size:13px; }
+  .leg { padding:8px 0; border-bottom:1px solid var(--border); }
+  .stat-row { display:flex; gap:14px; margin-bottom:16px; }
+  .stat { flex:1; background:#0d1218; border:1px solid var(--border); border-radius:8px; padding:12px; }
+  .stat .num { font-size:22px; font-weight:700; }
+  .stat .label { font-size:11px; color:var(--muted); text-transform:uppercase; }
+  .refresh-note { color:var(--muted); font-size:11px; margin-top:8px; }
+  .wide { grid-column:1 / -1; }
+  .state { display:inline-flex; align-items:center; gap:6px; font-weight:600; text-transform:capitalize; }
+  .state::before { content:''; width:7px; height:7px; border-radius:50%; background:var(--muted); }
+  .state.online { color:var(--light); }.state.online::before { background:var(--light); }
+  .state.starting { color:var(--moderate); }.state.starting::before { background:var(--moderate); }
+  .state.error { color:var(--heavy); }.state.error::before { background:var(--heavy); }
+  .source { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
+  @media (max-width:800px) { .grid { grid-template-columns:1fr; padding:14px; } .wide { grid-column:auto; } .source { max-width:130px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚦 City-Wide ANPR Trajectory &amp; Traffic Analytics</h1>
+  <p>Multi-camera plate detection, cross-camera trajectory tracking, and live congestion analytics</p>
+</header>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Congestion by Camera</h2>
+    <div class="stat-row" id="statRow"></div>
+    <canvas id="congestionChart" height="140"></canvas>
+    <table id="congestionTable">
+      <thead><tr><th>Camera</th><th>Vehicles/min</th><th>Level</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="refresh-note">Auto-refreshes every 10s</div>
+  </div>
+
+  <div class="panel">
+    <h2>Plate Trajectory Lookup</h2>
+    <div class="searchbar">
+      <input id="plateInput" placeholder="e.g. KA05MH1234" />
+      <button onclick="lookupPlate()">Track</button>
+    </div>
+    <div id="trajResult"></div>
+
+    <h2 style="margin-top:22px;">Overspeed Alerts</h2>
+    <table id="overspeedTable">
+      <thead><tr><th>Plate</th><th>Route</th><th>Speed</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel wide">
+    <h2>Camera Ingestion</h2>
+    <table id="ingestionTable">
+      <thead><tr><th>Camera</th><th>Source</th><th>Status</th><th>Frames read</th><th>Detections logged</th><th>Last frame</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="refresh-note">Worker heartbeat refreshes every 10s</div>
+  </div>
+</div>
+
+<script>
+const API = ""; // same-origin
+
+let chart;
+async function loadCongestion() {
+  const res = await fetch(`${API}/analytics/congestion`);
+  const data = await res.json();
+
+  const statRow = document.getElementById('statRow');
+  const summary = await (await fetch(`${API}/analytics/summary`)).json();
+  statRow.innerHTML = `
+    <div class="stat"><div class="num">${summary.unique_vehicles_seen}</div><div class="label">Vehicles (last hr)</div></div>
+    <div class="stat"><div class="num">${summary.total_cameras}</div><div class="label">Cameras Online</div></div>
+    <div class="stat"><div class="num">${summary.overspeed_incidents_total}</div><div class="label">Overspeed Incidents</div></div>
+  `;
+
+  const tbody = document.querySelector('#congestionTable tbody');
+  tbody.innerHTML = data.map(r => `
+    <tr><td>${r.camera_name}</td><td>${r.vehicles_per_minute}</td>
+    <td><span class="badge ${r.congestion_level}">${r.congestion_level}</span></td></tr>
+  `).join('');
+
+  const ctx = document.getElementById('congestionChart');
+  const labels = data.map(r => r.camera_name);
+  const values = data.map(r => r.vehicles_per_minute);
+  if (chart) { chart.data.labels = labels; chart.data.datasets[0].data = values; chart.update(); }
+  else {
+    chart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Vehicles/min', data: values, backgroundColor: '#4fc3f7' }] },
+      options: { plugins: { legend: { display: false } },
+        scales: { x: { ticks: { color: '#8a97a8' } }, y: { ticks: { color: '#8a97a8' } } } }
+    });
+  }
+}
+
+async function loadOverspeed() {
+  const res = await fetch(`${API}/analytics/overspeed?limit=15`);
+  const data = await res.json();
+  const tbody = document.querySelector('#overspeedTable tbody');
+  tbody.innerHTML = data.map(r => `
+    <tr><td>${r.plate_number}</td><td>${r.from_camera_id} → ${r.to_camera_id}</td>
+    <td>${r.speed_kmph.toFixed(1)} km/h</td></tr>
+  `).join('') || '<tr><td colspan="3" style="color:#8a97a8;">No overspeed incidents yet</td></tr>';
+}
+
+async function loadIngestionStatus() {
+  const res = await fetch(`${API}/ingestion/status`);
+  const data = await res.json();
+  const tbody = document.querySelector('#ingestionTable tbody');
+  tbody.innerHTML = data.map(camera => `
+    <tr><td>${camera.camera_name}</td><td class="source" title="${camera.source || ''}">${camera.source || '-'}</td>
+    <td><span class="state ${camera.state}">${camera.state}</span>${camera.error ? `<br><small style="color:#ef5350">${camera.error}</small>` : ''}</td>
+    <td>${camera.frames_read || 0}</td><td>${camera.detections_logged || 0}</td>
+    <td>${camera.last_frame_at ? new Date(camera.last_frame_at).toLocaleTimeString() : '-'}</td></tr>
+  `).join('');
+}
+
+async function lookupPlate() {
+  const plate = document.getElementById('plateInput').value.trim().toUpperCase();
+  const box = document.getElementById('trajResult');
+  if (!plate) return;
+  box.innerHTML = 'Loading...';
+  try {
+    const res = await fetch(`${API}/trajectory/${plate}`);
+    if (!res.ok) { box.innerHTML = `<span style="color:#ef5350;">No data for ${plate}</span>`; return; }
+    const data = await res.json();
+    if (data.legs) {
+      box.innerHTML = data.legs.map(l => `
+        <div class="leg">
+          <b>${l.from_camera}</b> → <b>${l.to_camera}</b><br/>
+          <span style="color:#8a97a8;">${l.duration_seconds}s • ${l.distance_km}km • </span>
+          <span style="color:${l.is_overspeed ? '#ef5350' : '#66bb6a'};">${l.speed_kmph} km/h</span>
+        </div>
+      `).join('') + (data.loitering.loitering
+        ? `<p style="color:#ffb74d;">⚠ Loitering detected at ${data.loitering.camera_id} (${data.loitering.duration_minutes} min)</p>` : '');
+    } else {
+      box.innerHTML = `<span style="color:#8a97a8;">${data.message}</span>`;
+    }
+  } catch (e) {
+    box.innerHTML = `<span style="color:#ef5350;">Error: ${e}</span>`;
+  }
+}
+
+loadCongestion(); loadOverspeed(); loadIngestionStatus();
+setInterval(loadCongestion, 10000);
+setInterval(loadOverspeed, 10000);
+setInterval(loadIngestionStatus, 10000);
+</script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+# -----------------------------------------------------------------------------
+# City camera network configuration
+# -----------------------------------------------------------------------------
+# source: path to a video file for demo/testing, or an RTSP/HTTP stream URL
+# lat/lon: camera's geographic position (used for the heatmap & map dashboard)
+# speed_limit_kmph: posted speed limit on the road segment leaving this camera
+# neighbors: cameras this one is directly road-connected to, with the driving
+#            distance in km. Used to compute vehicle speed between sightings.
+# -----------------------------------------------------------------------------
+
+database:
+  path: "city_anpr.db"
+
+detection:
+  plate_model_path: "models/plate_yolov8.pt"   # your fine-tuned plate detector
+  vehicle_model_path: "yolov8n.pt"             # generic vehicle detector (COCO)
+  confidence_threshold: 0.45
+  ocr_confidence_threshold: 0.35
+  frame_skip: 2          # process every Nth frame (perf tuning)
+
+analytics:
+  congestion_window_minutes: 5
+  overspeed_tolerance_kmph: 10
+  loitering_minutes_threshold: 15
+  heatmap_grid_size_deg: 0.002   # ~200m grid cells
+
+cameras:
+  - id: CAM_001
+    name: "MG Road Junction"
+    source: "sample_data/cam1.mp4"
+    lat: 12.9756
+    lon: 77.6068
+    speed_limit_kmph: 40
+    neighbors:
+      CAM_002: 1.8
+      CAM_003: 3.2
+
+  - id: CAM_002
+    name: "Silk Board Flyover"
+    source: "sample_data/cam2.mp4"
+    lat: 12.9172
+    lon: 77.6228
+    speed_limit_kmph: 50
+    neighbors:
+      CAM_001: 1.8
+      CAM_004: 2.5
+
+  - id: CAM_003
+    name: "Indiranagar 100ft Road"
+    source: "sample_data/cam3.mp4"
+    lat: 12.9719
+    lon: 77.6412
+    speed_limit_kmph: 40
+    neighbors:
+      CAM_001: 3.2
+      CAM_004: 4.0
+
+  - id: CAM_004
+    name: "Electronic City Toll"
+    source: "sample_data/cam4.mp4"
+    lat: 12.8452
+    lon: 77.6602
+    speed_limit_kmph: 60
+    neighbors:
+      CAM_002: 2.5
+      CAM_003: 4.0
