@@ -71,6 +71,7 @@ Then open `dashboard/index.html` (served by the API at `/`) in a browser.
 | `GET /trajectory/{plate}` | Full cross-camera trajectory with computed speeds |
 | `GET /analytics/congestion` | Vehicles/minute per camera, last N minutes |
 | `GET /analytics/heatmap` | Grid of detection density for map overlay |
+| `GET /analytics/route-congestion` | Camera-to-camera routes colored green, orange, or red by traffic volume and speed |
 | `GET /analytics/overspeed` | List of trajectory legs exceeding speed limit |
 | `GET /analytics/summary` | City-wide dashboard summary stats |
 

@@ -7,3 +7,6 @@ uvicorn>=0.29.0
 pyyaml>=6.0.1
 python-dateutil>=2.9.0
 pydantic>=2.7.0
+osmnx>=1.9.0               # OpenStreetMap road-network extraction
+scikit-learn>=1.4.0        # Required by OSMnx nearest-node routing
+folium>=0.16.0              # Leaflet-based map rendering (Python)

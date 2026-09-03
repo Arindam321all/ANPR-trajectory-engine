@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Interactive ANPR road-network map powered by OSMnx and Leaflet">
+  <title>ANPR Map — Road Network Viewer</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="" />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* ─── Design Tokens ─────────────────────────────────────────── */
+    :root {
+      --bg: #0b0f14;
+      --panel: #121822;
+      --border: #232c39;
+      --text: #e8edf3;
+      --muted: #8a97a8;
+      --accent: #4fc3f7;
+      --accent-glow: rgba(79, 195, 247, .25);
+      --road-default: #4fc3f7;
+      --road-primary: #ff7043;
+      --road-secondary: #ab47bc;
+      --road-tertiary: #66bb6a;
+      --road-residential: #5c6d82;
+      --font: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ─── Header ───────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      z-index: 1000;
+      flex-shrink: 0;
+    }
+    header .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    header .brand .icon {
+      width: 34px; height: 34px;
+      background: linear-gradient(135deg, var(--accent), #0288d1);
+      border-radius: 8px;
+      display: grid; place-items: center;
+      font-size: 18px;
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+    header h1 {
+      font-size: 17px; font-weight: 700;
+      letter-spacing: -.02em;
+    }
+    header .subtitle {
+      font-size: 12px; color: var(--muted); margin-top: 1px;
+    }
+    header .badge-live {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(102, 187, 106, .12);
+      color: #66bb6a;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    header .badge-live::before {
+      content: '';
+      width: 7px; height: 7px;
+      background: #66bb6a;
+      border-radius: 50%;
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: .4; transform: scale(.7); }
+    }
+
+    /* ─── Map Container ────────────────────────────────────────── */
+    #map {
+      flex: 1;
+      width: 100%;
+      background: #0a0e12;
+    }
+    /* Dark-invert the tile layer only, not the overlays */
+    .leaflet-tile-pane {
+      filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+    }
+
+    /* ─── Info Panel (overlay on map) ──────────────────────────── */
+    .info-panel {
+      position: fixed;
+      bottom: 24px; left: 24px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      z-index: 1000;
+      min-width: 260px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.45);
+      backdrop-filter: blur(12px);
+      transition: transform .3s ease, opacity .3s ease;
+    }
+    .info-panel h3 {
+      font-size: 13px; font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 10px;
+    }
+    .info-panel .info-row {
+      display: flex; justify-content: space-between;
+      padding: 5px 0;
+      font-size: 13px;
+    }
+    .info-panel .info-row .label { color: var(--muted); }
+    .info-panel .info-row .value { font-weight: 600; }
+
+    /* ─── Legend Panel ─────────────────────────────────────────── */
+    .legend-panel {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      z-index: 1000;
+      box-shadow: 0 8px 32px rgba(0,0,0,.45);
+      backdrop-filter: blur(12px);
+    }
+    .legend-panel h3 {
+      font-size: 13px; font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 10px;
+    }
+    .legend-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 0; font-size: 12px;
+    }
+    .legend-swatch {
+      width: 22px; height: 3px;
+      border-radius: 2px;
+    }
+
+    /* ─── Loading Overlay ──────────────────────────────────────── */
+    #loadingOverlay {
+      position: fixed; inset: 0;
+      background: rgba(11, 15, 20, .88);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 9999;
+      transition: opacity .4s ease;
+    }
+    #loadingOverlay.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 42px; height: 42px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loadingOverlay p { margin-top: 14px; color: var(--muted); font-size: 13px; }
+
+    /* ─── Leaflet overrides for dark theme ─────────────────────── */
+    .leaflet-control-zoom a {
+      background: var(--panel) !important;
+      color: var(--text) !important;
+      border-color: var(--border) !important;
+    }
+    .leaflet-control-zoom a:hover {
+      background: var(--bg) !important;
+    }
+    .leaflet-control-attribution {
+      background: rgba(18, 24, 34, .85) !important;
+      color: var(--muted) !important;
+      font-size: 10px !important;
+    }
+    .leaflet-control-attribution a { color: var(--accent) !important; }
+
+    /* ─── Responsive ───────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .info-panel, .legend-panel { display: none; }
+      header h1 { font-size: 14px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <p>Loading road network…</p>
+</div>
+
+<!-- Header -->
+<header>
+  <div class="brand">
+    <div class="icon">🗺️</div>
+    <div>
+      <h1>ANPR Road Network Map</h1>
+      <div class="subtitle">Connaught Place, New Delhi — ~1 km × 1 km</div>
+    </div>
+  </div>
+  <div class="badge-live">Map Loaded</div>
+</header>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Info Panel -->
+<div class="info-panel" id="infoPanel">
+  <h3>Map Info</h3>
+  <div class="info-row"><span class="label">Locality</span><span class="value" id="infoLocality">—</span></div>
+  <div class="info-row"><span class="label">Roads</span><span class="value" id="infoRoads">—</span></div>
+  <div class="info-row"><span class="label">Coverage</span><span class="value" id="infoCoverage">—</span></div>
+  <div class="info-row"><span class="label">Centre</span><span class="value" id="infoCentre">—</span></div>
+</div>
+
+<!-- Legend -->
+<div class="legend-panel">
+  <h3>Road Types</h3>
+  <div class="legend-item"><span class="legend-swatch" style="background:#ff7043"></span> Primary / Trunk</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#ab47bc"></span> Secondary</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#66bb6a"></span> Tertiary</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#5c6d82"></span> Residential / Other</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#4fc3f7"></span> Unclassified</div>
+</div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+
+<script>
+// ─── Defaults (used if metadata / GeoJSON are missing) ────────────
+const DEFAULTS = {
+  center: [28.6315, 77.2167],
+  zoom: 16,
+  locality: "Connaught Place, New Delhi",
+  radius_m: 600,
+};
+
+// ─── Road-type colour mapping ─────────────────────────────────────
+function roadColor(highway) {
+  if (!highway) return '#4fc3f7';
+  const h = Array.isArray(highway) ? highway[0] : highway;
+  const map = {
+    motorway: '#ff7043', trunk: '#ff7043', primary: '#ff7043',
+    motorway_link: '#ff7043', trunk_link: '#ff7043', primary_link: '#ff7043',
+    secondary: '#ab47bc', secondary_link: '#ab47bc',
+    tertiary: '#66bb6a', tertiary_link: '#66bb6a',
+    residential: '#5c6d82', living_street: '#5c6d82',
+    service: '#5c6d82', unclassified: '#4fc3f7',
+  };
+  return map[h] || '#4fc3f7';
+}
+
+function roadWeight(highway) {
+  if (!highway) return 2;
+  const h = Array.isArray(highway) ? highway[0] : highway;
+  if (['motorway','trunk','primary','motorway_link','trunk_link','primary_link'].includes(h)) return 3.5;
+  if (['secondary','secondary_link'].includes(h)) return 2.8;
+  if (['tertiary','tertiary_link'].includes(h)) return 2.2;
+  return 1.6;
+}
+
+// ─── Initialise Map ───────────────────────────────────────────────
+const map = L.map('map', {
+  center: DEFAULTS.center,
+  zoom: DEFAULTS.zoom,
+  zoomControl: true,
+  attributionControl: true,
+});
+
+// Dark tile layer — standard OSM tiles with CSS dark-inversion applied
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  maxZoom: 19,
+}).addTo(map);
+
+// ─── Load GeoJSON road network ────────────────────────────────────
+async function loadMap() {
+  const overlay = document.getElementById('loadingOverlay');
+  try {
+    // Try loading metadata
+    let meta = DEFAULTS;
+    try {
+      const metaRes = await fetch('data/map_meta.json');
+      if (metaRes.ok) meta = await metaRes.json();
+    } catch (_) { /* use defaults */ }
+
+    // Update info panel
+    document.getElementById('infoLocality').textContent = meta.locality || DEFAULTS.locality;
+    document.getElementById('infoCentre').textContent =
+      `${(meta.center[0]).toFixed(4)}°N, ${(meta.center[1]).toFixed(4)}°E`;
+    document.getElementById('infoCoverage').textContent =
+      `~${((meta.radius_m || DEFAULTS.radius_m) * 2 / 1000).toFixed(1)} km × ${((meta.radius_m || DEFAULTS.radius_m) * 2 / 1000).toFixed(1)} km`;
+
+    // Set map view
+    map.setView(meta.center || DEFAULTS.center, meta.default_zoom || DEFAULTS.zoom);
+
+    // Load GeoJSON
+    const res = await fetch('data/road_network.geojson');
+    if (!res.ok) throw new Error(`GeoJSON not found (${res.status}). Run generate_map.py first.`);
+    const geojson = await res.json();
+
+    const roadLayer = L.geoJSON(geojson, {
+      style: (feature) => ({
+        color: roadColor(feature.properties.highway),
+        weight: roadWeight(feature.properties.highway),
+        opacity: 0.85,
+        lineJoin: 'round',
+        lineCap: 'round',
+      }),
+      onEachFeature: (feature, layer) => {
+        const p = feature.properties;
+        const name = p.name || 'Unnamed road';
+        const type = Array.isArray(p.highway) ? p.highway.join(', ') : (p.highway || '—');
+        const len = p.length ? `${p.length.toFixed(0)} m` : '—';
+        layer.bindPopup(`
+          <div style="font-family:Inter,sans-serif;font-size:13px;">
+            <strong>${name}</strong><br/>
+            <span style="color:#999;">Type:</span> ${type}<br/>
+            <span style="color:#999;">Length:</span> ${len}
+          </div>
+        `);
+
+        // Hover glow effect
+        layer.on('mouseover', function () {
+          this.setStyle({ weight: this.options.weight + 2.5, opacity: 1 });
+          this.bringToFront();
+        });
+        layer.on('mouseout', function () {
+          roadLayer.resetStyle(this);
+        });
+      },
+    }).addTo(map);
+
+    // Count roads
+    const roadCount = geojson.features ? geojson.features.length : 0;
+    document.getElementById('infoRoads').textContent = `${roadCount} segments`;
+
+    // Fit to road bounds with max zoom to avoid zooming out too much
+    if (roadLayer.getBounds().isValid()) {
+      map.fitBounds(roadLayer.getBounds(), { padding: [40, 40], maxZoom: 16 });
+    }
+
+  } catch (err) {
+    console.error('Map load error:', err);
+    // Show fallback message on map
+    const msgDiv = document.createElement('div');
+    msgDiv.style.cssText =
+      'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
+      'background:#1a2233;border:1px solid #2a3444;border-radius:12px;padding:28px 36px;' +
+      'z-index:2000;text-align:center;font-family:Inter,sans-serif;';
+    msgDiv.innerHTML = `
+      <p style="font-size:18px;font-weight:600;margin-bottom:8px;">⚠️ Road network data not found</p>
+      <p style="color:#8a97a8;font-size:13px;max-width:340px;">
+        Run <code style="background:#111;padding:2px 6px;border-radius:4px;">python map/generate_map.py</code>
+        to download the road network GeoJSON using OSMnx.
+      </p>
+    `;
+    document.body.appendChild(msgDiv);
+  } finally {
+    overlay.classList.add('hidden');
+    setTimeout(() => overlay.remove(), 500);
+  }
+}
+
+loadMap();
+</script>
+</body>
+</html>

@@ -122,3 +122,57 @@ def city_summary(window_minutes: int = 60) -> dict:
         "overspeed_incidents_total": len(overspeed),
         "congestion_by_camera": congestion,
     }
+
+
+def route_congestion_report(window_minutes: int = 60) -> list[dict]:
+    """Aggregate directed camera-to-camera legs into a traffic report.
+
+    Counts provide the base level. A segment carrying traffic at less than the
+    configured fraction of its posted speed limit is promoted one level, so
+    the report also reflects slow-moving traffic rather than volume alone.
+    """
+    cfg = get_config()["analytics"]["route_congestion"]
+    since_iso = _since(window_minutes)
+    legs = database.get_recent_trajectory_legs(since_iso)
+
+    route_legs = defaultdict(list)
+    for leg in legs:
+        route_legs[(leg["from_camera_id"], leg["to_camera_id"])].append(leg)
+
+    def level_for(count: int, average_speed: float | None, speed_limit: float) -> tuple[str, str]:
+        if count <= cfg["free_max_vehicles"]:
+            level_index = 0
+        elif count <= cfg["light_max_vehicles"]:
+            level_index = 1
+        else:
+            level_index = 2
+
+        if (average_speed is not None and speed_limit > 0
+                and average_speed < speed_limit * cfg["slow_speed_ratio"]):
+            level_index = min(level_index + 1, 2)
+
+        levels = (("free", "#66bb6a"), ("light", "#ff9800"), ("very_crowded", "#e53935"))
+        return levels[level_index]
+
+    report = []
+    for (cam_a_id, cam_b_id), route in route_legs.items():
+        count = len(route)
+        speeds = [float(leg["speed_kmph"]) for leg in route if leg["speed_kmph"] is not None]
+        durations = [float(leg["duration_seconds"]) for leg in route
+                     if leg["duration_seconds"] is not None]
+        average_speed = sum(speeds) / len(speeds) if speeds else None
+        average_duration = sum(durations) / len(durations) if durations else None
+        speed_limit = float(get_camera(cam_a_id).get("speed_limit_kmph", 0))
+        level, color = level_for(count, average_speed, speed_limit)
+
+        report.append({
+            "from_camera_id": cam_a_id,
+            "to_camera_id": cam_b_id,
+            "vehicle_count": count,
+            "average_speed_kmph": round(average_speed, 1) if average_speed is not None else None,
+            "average_travel_time_seconds": round(average_duration, 1) if average_duration is not None else None,
+            "speed_limit_kmph": speed_limit,
+            "congestion_level": level,
+            "color": color
+        })
+    return sorted(report, key=lambda x: x["vehicle_count"], reverse=True)

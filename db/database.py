@@ -162,6 +162,15 @@ def get_trajectory_legs_for_plate(plate_number: str) -> list[sqlite3.Row]:
         return cur.fetchall()
 
 
+def get_recent_trajectory_legs(since_iso: str) -> list[sqlite3.Row]:
+    with cursor() as cur:
+        cur.execute(
+            "SELECT * FROM trajectory_legs WHERE from_timestamp >= ?",
+            (since_iso,)
+        )
+        return cur.fetchall()
+
+
 def get_overspeed_legs(limit: int = 100) -> list[sqlite3.Row]:
     with cursor() as cur:
         cur.execute(

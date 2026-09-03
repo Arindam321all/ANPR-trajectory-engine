@@ -13,9 +13,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from db import database
-from tracking import trajectory_engine
+from tracking import trajectory_engine, routing
 from analytics import traffic_analytics
-from config_loader import get_config, all_camera_ids
+from config_loader import get_config, all_camera_ids, get_camera
 
 app = FastAPI(
     title="City-Wide ANPR Trajectory & Traffic Analytics API",
@@ -28,6 +28,9 @@ app.add_middleware(
 )
 
 DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"
+MAP_DIR = Path(__file__).parent.parent / "map"
+
+app.mount("/map", StaticFiles(directory=MAP_DIR), name="map")
 
 
 @app.on_event("startup")
@@ -79,7 +82,20 @@ def get_trajectory(plate: str, rebuild: bool = False):
     if rebuild or not existing:
         legs = trajectory_engine.build_trajectory_for_plate(plate)
     else:
-        legs = [dict(r) for r in existing]
+        legs = []
+        for r in existing:
+            leg = dict(r)
+            # Map DB columns to API response structure
+            leg["from_camera"] = leg["from_camera_id"]
+            leg["to_camera"] = leg["to_camera_id"]
+            
+            # Attach route_coords dynamically if loaded from DB
+            cam_a, cam_b = get_camera(leg["from_camera_id"]), get_camera(leg["to_camera_id"])
+            coords, _ = routing.get_optimistic_route(
+                cam_a["lat"], cam_a["lon"], cam_b["lat"], cam_b["lon"]
+            )
+            leg["route_coords"] = coords or []
+            legs.append(leg)
 
     if not legs:
         detections = database.get_detections_for_plate(plate)
@@ -110,6 +126,16 @@ def congestion(window_minutes: int | None = None):
 @app.get("/analytics/heatmap")
 def heatmap(window_minutes: int = 60):
     return traffic_analytics.heatmap_grid(window_minutes)
+
+
+@app.get("/analytics/route-congestion")
+def route_congestion(window_minutes: int = 60):
+    report = traffic_analytics.route_congestion_report(window_minutes)
+    for route in report:
+        cam_a, cam_b = get_camera(route["from_camera_id"]), get_camera(route["to_camera_id"])
+        coords, _ = routing.get_optimistic_route(cam_a["lat"], cam_a["lon"], cam_b["lat"], cam_b["lon"])
+        route["route_coords"] = coords or []
+    return report
 
 
 @app.get("/analytics/overspeed")

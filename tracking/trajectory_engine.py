@@ -26,6 +26,7 @@ from dateutil import parser as dtparser
 
 from config_loader import get_config, get_camera
 from db import database
+from tracking import routing
 
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
@@ -36,17 +37,23 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return R * 2 * math.asin(math.sqrt(a))
 
 
-def _distance_between(cam_a: str, cam_b: str) -> tuple[float, bool]:
-    """Returns (distance_km, is_confirmed_road_distance).
-    Uses the configured road-network distance if the cameras are direct
-    neighbors; otherwise falls back to straight-line haversine distance
-    (flagged as unconfirmed, since actual road distance is >= straight-line)."""
+def _distance_between(cam_a: str, cam_b: str) -> tuple[float, bool, list]:
+    """Returns (distance_km, is_confirmed_road_distance, route_coords).
+    Uses OSMnx routing to find the shortest optimistic path between cameras.
+    Falls back to straight-line haversine distance if no path found."""
     cam_a_cfg, cam_b_cfg = get_camera(cam_a), get_camera(cam_b)
-    neighbors = cam_a_cfg.get("neighbors", {})
-    if cam_b in neighbors:
-        return neighbors[cam_b], True
+    
+    coords, dist = routing.get_optimistic_route(
+        cam_a_cfg["lat"], cam_a_cfg["lon"], 
+        cam_b_cfg["lat"], cam_b_cfg["lon"]
+    )
+    
+    if coords is not None and dist > 0:
+        return dist, True, coords
+        
+    # Fallback
     dist = _haversine_km(cam_a_cfg["lat"], cam_a_cfg["lon"], cam_b_cfg["lat"], cam_b_cfg["lon"])
-    return dist, False
+    return dist, False, []
 
 
 def build_trajectory_for_plate(plate_number: str) -> list[dict]:
@@ -69,7 +76,7 @@ def build_trajectory_for_plate(plate_number: str) -> list[dict]:
         if duration_s <= 0:
             continue
 
-        distance_km, confirmed = _distance_between(a["camera_id"], b["camera_id"])
+        distance_km, confirmed, route_coords = _distance_between(a["camera_id"], b["camera_id"])
         speed_kmph = distance_km / (duration_s / 3600.0)
 
         to_cam_cfg = get_camera(b["camera_id"])
@@ -92,6 +99,7 @@ def build_trajectory_for_plate(plate_number: str) -> list[dict]:
             "speed_kmph": round(speed_kmph, 1),
             "road_distance_confirmed": confirmed,
             "is_overspeed": is_overspeed,
+            "route_coords": route_coords,
         })
 
     return legs

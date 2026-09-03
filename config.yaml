@@ -20,47 +20,62 @@ detection:
 
 analytics:
   congestion_window_minutes: 5
+  route_congestion:
+    # Count thresholds apply to each directed camera-to-camera road segment.
+    # A slow segment is promoted one level because it is carrying traffic poorly.
+    free_max_vehicles: 2
+    light_max_vehicles: 5
+    slow_speed_ratio: 0.5       # average speed below 50% of posted limit
   overspeed_tolerance_kmph: 10
   loitering_minutes_threshold: 15
   heatmap_grid_size_deg: 0.002   # ~200m grid cells
 
 cameras:
   - id: CAM_001
-    name: "MG Road Junction"
+    name: "Connaught Place Inner Circle"
     source: "sample_data/cam1.mp4"
-    lat: 12.9756
-    lon: 77.6068
+    lat: 28.6315
+    lon: 77.2167
     speed_limit_kmph: 40
-    neighbors:
-      CAM_002: 1.8
-      CAM_003: 3.2
 
   - id: CAM_002
-    name: "Silk Board Flyover"
+    name: "India Gate Hexagon"
     source: "sample_data/cam2.mp4"
-    lat: 12.9172
-    lon: 77.6228
+    lat: 28.6129
+    lon: 77.2295
     speed_limit_kmph: 50
-    neighbors:
-      CAM_001: 1.8
-      CAM_004: 2.5
 
   - id: CAM_003
-    name: "Indiranagar 100ft Road"
+    name: "Karol Bagh Junction"
     source: "sample_data/cam3.mp4"
-    lat: 12.9719
-    lon: 77.6412
+    lat: 28.6510
+    lon: 77.1905
     speed_limit_kmph: 40
-    neighbors:
-      CAM_001: 3.2
-      CAM_004: 4.0
 
   - id: CAM_004
-    name: "Electronic City Toll"
+    name: "NDLS Railway Station"
     source: "sample_data/cam4.mp4"
-    lat: 12.8452
-    lon: 77.6602
-    speed_limit_kmph: 60
-    neighbors:
-      CAM_002: 2.5
-      CAM_003: 4.0
+    lat: 28.6420
+    lon: 77.2190
+    speed_limit_kmph: 40
+
+  - id: CAM_005
+    name: "Red Fort Intersection"
+    source: "sample_data/cam5.mp4"
+    lat: 28.6562
+    lon: 77.2410
+    speed_limit_kmph: 40
+
+  - id: CAM_006
+    name: "Rashtrapati Bhavan Gates"
+    source: "sample_data/cam6.mp4"
+    lat: 28.6143
+    lon: 77.1994
+    speed_limit_kmph: 50
+
+  - id: CAM_007
+    name: "ITO Crossing"
+    source: "sample_data/cam7.mp4"
+    lat: 28.6280
+    lon: 77.2420
+    speed_limit_kmph: 50
