@@ -1,55 +1,19 @@
 """
-<<<<<<< HEAD
 Thin SQLite data-access layer. Every write/read the rest of the system needs
 goes through here, so swapping SQLite for Postgres later only means changing
 this file's connection logic (the SQL below is written to be portable).
 """
 import sqlite3
 import threading
-import json
 from pathlib import Path
 from contextlib import contextmanager
-=======
-Backend-selecting facade. Every other module in the repo does
->>>>>>> a3f9c3fed25f892380f5c71a9a4aec6a6ba351eb
 
-    from db.database import insert_detection, get_detections_for_plate, ...
-
-and keeps working unchanged no matter which backend is configured -- this
-file just re-exports the real implementation from db/backends/.
-
-Pick the backend in config.yaml:
-
-    database:
-      type: sqlite            # default, unchanged from before
-      path: "city_anpr.db"
-
-    database:
-      type: postgres           # new, for large-scale / production deployments
-      host: "localhost"
-      port: 5432
-      name: "anpr"
-      user: "anpr"
-      password: "changeme"     # prefer an env-var driven dsn: below instead
-      # dsn: "${DATABASE_URL}"  # optional, overrides host/port/name/user/password
-      pool_min: 2
-      pool_max: 20
-
-Why: SQLite is a single file with one effective writer, so ingestion from
-several camera threads plus concurrent API reads becomes a bottleneck as
-detection volume grows (this was already flagged in the README's production
-notes). Postgres gives real concurrent writers, connection pooling, and
-scales to the "large amount of data" a multi-camera, city-wide deployment
-produces, without changing a single call site elsewhere in the codebase.
-"""
 from config_loader import get_config
 
+_SCHEMA_PATH = Path(__file__).parent.parent / "schema.sql"
+_local = threading.local()  # one connection per thread (safe for multi-camera threads)
 
-def _backend_name() -> str:
-    return get_config().get("database", {}).get("type", "sqlite").lower()
 
-
-<<<<<<< HEAD
 def _db_path() -> str:
     return get_config()["database"]["path"]
 
@@ -80,16 +44,6 @@ def init_db():
     conn = sqlite3.connect(_db_path())
     with open(_SCHEMA_PATH, "r") as f:
         conn.executescript(f.read())
-    # Keep databases created by older versions usable after schema updates.
-    detection_columns = {row[1] for row in conn.execute("PRAGMA table_info(detections)")}
-    for column, definition in {
-        "signal_state": "TEXT",
-        "crossed_stop_line": "INTEGER",
-        "travel_direction": "TEXT",
-        "lane_type": "TEXT",
-    }.items():
-        if column not in detection_columns:
-            conn.execute(f"ALTER TABLE detections ADD COLUMN {column} {definition}")
     conn.commit()
     conn.close()
     print(f"[db] initialized at {_db_path()}")
@@ -102,23 +56,16 @@ def init_db():
 def insert_detection(plate_number: str, camera_id: str, timestamp: str,
                       confidence: float, ocr_confidence: float,
                       bbox: tuple | None = None, vehicle_type: str | None = None,
-                      frame_snapshot: str | None = None,
-                      signal_state: str | None = None,
-                      crossed_stop_line: bool | None = None,
-                      travel_direction: str | None = None,
-                      lane_type: str | None = None) -> int:
+                      frame_snapshot: str | None = None) -> int:
     bbox = bbox or (None, None, None, None)
     with cursor() as cur:
         cur.execute(
             """INSERT INTO detections
-                             (plate_number, camera_id, timestamp, confidence, ocr_confidence,
-                                bbox_x1, bbox_y1, bbox_x2, bbox_y2, vehicle_type, frame_snapshot,
-                                signal_state, crossed_stop_line, travel_direction, lane_type)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (plate_number, camera_id, timestamp, confidence, ocr_confidence,
+                bbox_x1, bbox_y1, bbox_x2, bbox_y2, vehicle_type, frame_snapshot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (plate_number, camera_id, timestamp, confidence, ocr_confidence,
-                         *bbox, vehicle_type, frame_snapshot, signal_state,
-                         None if crossed_stop_line is None else int(crossed_stop_line),
-                         travel_direction, lane_type),
+             *bbox, vehicle_type, frame_snapshot),
         )
         return cur.lastrowid
 
@@ -255,55 +202,3 @@ def add_to_watchlist(plate_number: str, reason: str):
             "INSERT OR REPLACE INTO watchlist (plate_number, reason, added_at) VALUES (?, ?, ?)",
             (plate_number, reason, datetime.now(timezone.utc).isoformat()),
         )
-
-
-def insert_alert(fingerprint: str, alert_type: str, severity: str,
-                 plate_number: str | None, camera_id: str | None,
-                 from_camera_id: str | None, to_camera_id: str | None,
-                 occurred_at: str, message: str, details: dict) -> tuple[int, bool]:
-    """Insert one alert once. Returns (id, was_created)."""
-    from datetime import datetime, timezone
-    with cursor() as cur:
-        cur.execute(
-            """INSERT OR IGNORE INTO alerts
-               (fingerprint, alert_type, severity, plate_number, camera_id,
-                from_camera_id, to_camera_id, occurred_at, message, details_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (fingerprint, alert_type, severity, plate_number, camera_id,
-             from_camera_id, to_camera_id, occurred_at, message,
-             json.dumps(details, default=str), datetime.now(timezone.utc).isoformat()),
-        )
-        if cur.rowcount == 0:
-            cur.execute("SELECT id FROM alerts WHERE fingerprint = ?", (fingerprint,))
-            return cur.fetchone()["id"], False
-        return cur.lastrowid, True
-
-
-def mark_alert_notified(alert_id: int):
-    with cursor() as cur:
-        cur.execute("UPDATE alerts SET notified = 1 WHERE id = ?", (alert_id,))
-
-
-def get_recent_alerts(since_iso: str, alert_type: str | None = None,
-                      limit: int = 100) -> list[sqlite3.Row]:
-    with cursor() as cur:
-        if alert_type:
-            cur.execute(
-                "SELECT * FROM alerts WHERE occurred_at >= ? AND alert_type = ? "
-                "ORDER BY occurred_at DESC LIMIT ?", (since_iso, alert_type, limit))
-        else:
-            cur.execute(
-                "SELECT * FROM alerts WHERE occurred_at >= ? ORDER BY occurred_at DESC LIMIT ?",
-                (since_iso, limit))
-        return cur.fetchall()
-=======
-_name = _backend_name()
-if _name == "postgres":
-    from db.backends.postgres_backend import *  # noqa: F401,F403
-elif _name == "sqlite":
-    from db.backends.sqlite_backend import *  # noqa: F401,F403
-else:
-    raise ValueError(
-        f"Unknown database.type '{_name}' in config.yaml -- expected 'sqlite' or 'postgres'"
-    )
->>>>>>> a3f9c3fed25f892380f5c71a9a4aec6a6ba351eb

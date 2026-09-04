@@ -9,7 +9,18 @@
 # -----------------------------------------------------------------------------
 
 database:
-  path: "city_anpr.db"
+  type: "sqlite"          # "sqlite" (default, good for local/demo) or "postgres" (large-scale)
+  path: "city_anpr.db"    # used when type: sqlite
+
+  # --- used when type: postgres ---
+  # host: "localhost"
+  # port: 5432
+  # name: "anpr"
+  # user: "anpr"
+  # password: "changeme"
+  # dsn: ""                # optional full DSN/URL, overrides host/port/name/user/password
+  # pool_min: 2
+  # pool_max: 20
 
 detection:
   plate_model_path: "models/plate_yolov8.pt"   # your fine-tuned plate detector
