@@ -27,6 +27,7 @@ from dateutil import parser as dtparser
 from config_loader import get_config, get_camera
 from db import database
 from tracking import routing
+from alerting import alert_engine
 
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
@@ -90,9 +91,10 @@ def build_trajectory_for_plate(plate_number: str) -> list[dict]:
             distance_km=distance_km, duration_seconds=duration_s,
             speed_kmph=speed_kmph, is_overspeed=is_overspeed,
         )
-        legs.append({
+        leg = {
             "plate_number": plate_number,
             "from_camera": a["camera_id"], "to_camera": b["camera_id"],
+            "from_camera_id": a["camera_id"], "to_camera_id": b["camera_id"],
             "from_timestamp": a["timestamp"], "to_timestamp": b["timestamp"],
             "distance_km": round(distance_km, 3),
             "duration_seconds": round(duration_s, 1),
@@ -100,7 +102,9 @@ def build_trajectory_for_plate(plate_number: str) -> list[dict]:
             "road_distance_confirmed": confirmed,
             "is_overspeed": is_overspeed,
             "route_coords": route_coords,
-        })
+        }
+        alert_engine.evaluate_leg(leg)
+        legs.append(leg)
 
     return legs
 

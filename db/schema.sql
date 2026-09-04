@@ -11,7 +11,11 @@ CREATE TABLE IF NOT EXISTS detections (
     bbox_x2         INTEGER,
     bbox_y2         INTEGER,
     vehicle_type    TEXT,                 -- car / truck / bike / bus (optional)
-    frame_snapshot  TEXT                  -- optional path to saved crop image
+    frame_snapshot  TEXT,                 -- optional path to saved crop image
+    signal_state    TEXT,                 -- green / yellow / red (optional)
+    crossed_stop_line INTEGER,             -- optional signal/lane observation
+    travel_direction TEXT,                -- adapter-defined direction label
+    lane_type       TEXT                  -- two_wheeler / non_motorised / motorised
 );
 
 CREATE INDEX IF NOT EXISTS idx_detections_plate ON detections(plate_number);
@@ -59,3 +63,23 @@ CREATE TABLE IF NOT EXISTS watchlist (
     reason          TEXT,
     added_at        TEXT
 );
+
+-- Deduplicated rule violations and their delivery state.
+CREATE TABLE IF NOT EXISTS alerts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    fingerprint     TEXT NOT NULL UNIQUE,
+    alert_type      TEXT NOT NULL,
+    severity        TEXT NOT NULL,
+    plate_number    TEXT,
+    camera_id       TEXT,
+    from_camera_id  TEXT,
+    to_camera_id    TEXT,
+    occurred_at     TEXT NOT NULL,
+    message         TEXT NOT NULL,
+    details_json    TEXT NOT NULL,
+    notified        INTEGER DEFAULT 0,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_type ON alerts(alert_type);

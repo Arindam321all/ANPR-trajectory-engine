@@ -30,6 +30,20 @@ analytics:
   loitering_minutes_threshold: 15
   heatmap_grid_size_deg: 0.002   # ~200m grid cells
 
+# Rule-based notifications. Leave webhook_url null to use logging only.
+alerting:
+  rules:
+    blacklisted_vehicle: true
+    overspeed: true
+    signal_jump: true
+    route_deviation: true
+    restricted_lane: true
+    wrong_way: true
+  notifications:
+    log: false
+    webhook_url: null
+    timeout_seconds: 5
+
 cameras:
   - id: CAM_001
     name: "Connaught Place Inner Circle"
@@ -37,6 +51,8 @@ cameras:
     lat: 28.6315
     lon: 77.2167
     speed_limit_kmph: 40
+    # Optional: lane_type, restricted_vehicle_types, allowed_next_cameras,
+    # temporary_one_way_to, and allowed_directions.
 
   - id: CAM_002
     name: "India Gate Hexagon"

@@ -6,7 +6,8 @@ A city-scale pipeline that:
 2. **Tracks vehicles within a single camera** view (`tracking/camera_tracker.py`)
 3. **Links a vehicle's plate across different cameras** across the city into a single trajectory, ordered by time (`tracking/trajectory_engine.py`)
 4. **Computes traffic analytics**: inter-camera travel speed, congestion levels, hotspot heatmaps, overspeed flags, route reconstruction (`analytics/traffic_analytics.py`)
-5. **Serves everything over a REST API** (`api/main.py`) + a lightweight live dashboard (`dashboard/index.html`)
+5. **Evaluates traffic rules and sends alerts**: watchlist, overspeed, signal jumps, restricted lanes, route deviation, wrong-way and temporary one-way violations (`alerting/`)
+6. **Serves everything over a REST API** (`api/main.py`) + a lightweight live dashboard (`dashboard/index.html`)
 
 ## Architecture
 
@@ -74,6 +75,26 @@ Then open `dashboard/index.html` (served by the API at `/`) in a browser.
 | `GET /analytics/route-congestion` | Camera-to-camera routes colored green, orange, or red by traffic volume and speed |
 | `GET /analytics/overspeed` | List of trajectory legs exceeding speed limit |
 | `GET /analytics/summary` | City-wide dashboard summary stats |
+| `GET /alerts?window_minutes=60` | Recent rule violations and notification status |
+
+## Configure enforcement rules
+
+The `alerting.rules` section in `config.yaml` enables or disables each rule.
+Add camera metadata where it applies: `allowed_next_cameras` for directed route
+checks, `temporary_one_way_to` for temporary one-way enforcement, `lane_type`
+(`two_wheeler` or `non_motorised`) with optional `restricted_vehicle_types`, and
+`allowed_directions` for direction checks.
+
+Watchlist alerts are automatic after `POST /watchlist/add`. Overspeed alerts use
+confirmed routed distance and the existing speed-limit calculation. Signal-jump,
+wrong-way, and per-frame lane alerts require a perception adapter to call
+`CameraTracker.process_frame(frame, event_context={...})` with `signal_state`,
+`crossed_stop_line`, `travel_direction`, and/or `lane_type`. OCR alone cannot
+prove those violations.
+
+Set `alerting.notifications.webhook_url` to deliver JSON alerts to an HTTP
+receiver. Logging remains enabled by default, and a failed webhook never stops
+camera ingestion.
 
 ## Notes on production hardening
 

@@ -33,6 +33,7 @@
           padding:9px 12px; border-radius:8px; font-size:13px; }
   button { background:var(--accent); border:none; color:#04202b; font-weight:600;
            padding:9px 16px; border-radius:8px; cursor:pointer; font-size:13px; }
+  button.secondary { background:#1e293b; border:1px solid var(--border); color:var(--text); }
   #trajResult { margin-top:14px; font-size:13px; }
   .leg { padding:8px 0; border-bottom:1px solid var(--border); }
   .stat-row { display:flex; gap:14px; margin-bottom:16px; }
@@ -70,11 +71,30 @@
   .map-info-bar { display:flex; align-items:center; gap:16px; padding:10px 18px; border-top:1px solid var(--border); font-size:12px; color:var(--muted); }
   .map-info-bar span { display:flex; align-items:center; gap:4px; }
   .map-info-bar .val { color:var(--text); font-weight:600; }
+  .route-arrow { color:#ffd166; font-size:18px; font-weight:700; text-shadow:0 1px 3px #000; }
+  /* Alerts stay in the dashboard rather than the ingestion terminal. */
+  #alertRail { position:fixed; top:18px; right:18px; z-index:2000; width:min(360px, calc(100vw - 36px)); pointer-events:none; }
+  .alert-toast { pointer-events:auto; margin-bottom:10px; padding:12px 14px 11px; background:#18202b; border:1px solid #344154;
+    border-left:4px solid var(--moderate); border-radius:8px; box-shadow:0 12px 30px rgba(0,0,0,.38); animation:alertIn .25s ease-out; }
+  .alert-toast.critical, .alert-toast.high { border-left-color:var(--heavy); }
+  .alert-toast.medium { border-left-color:var(--moderate); }
+  .alert-toast-head { display:flex; justify-content:space-between; gap:10px; align-items:center; font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted); }
+  .alert-toast-close { background:transparent; color:var(--muted); padding:0 2px; font-size:18px; line-height:14px; }
+  .alert-toast-message { margin-top:6px; font-size:13px; line-height:1.35; color:var(--text); }
+  .alert-toast-meta { margin-top:6px; color:var(--muted); font-size:11px; }
+  #alertHistory { max-height:260px; overflow:auto; }
+  .alert-history-item { padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
+  .alert-history-item:last-child { border-bottom:0; }
+  .alert-history-item strong { color:var(--text); }
+  .alert-history-item small { display:block; color:var(--muted); margin-top:3px; }
+  @keyframes alertIn { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:translateX(0); } }
   @media (max-width:800px) { .grid { grid-template-columns:1fr; padding:14px; } .wide { grid-column:auto; } .source { max-width:130px; }
-    .map-section { padding:14px; } #networkMap { height:280px; } .map-legend { display:none; } }
+    .map-section { padding:14px; } #networkMap { height:280px; } .map-legend { display:none; }
+    #alertRail { top:10px; right:10px; width:min(340px, calc(100vw - 20px)); } }
 </style>
 </head>
 <body>
+<aside id="alertRail" aria-live="polite" aria-label="Traffic alerts"></aside>
 <header>
   <h1>🚦 City-Wide ANPR Trajectory &amp; Traffic Analytics</h1>
   <p>Multi-camera plate detection, cross-camera trajectory tracking, and live congestion analytics</p>
@@ -93,7 +113,7 @@
       <div id="networkMap"></div>
       <div class="map-legend">
         <h4>Road Types</h4>
-        <div class="map-legend-item"><span class="map-legend-swatch" style="background:#ff7043"></span> Primary / Trunk</div>
+        <div class="map-legend-item"><span class="map-legend-swatch" style="background:#8b0000"></span> Primary / Trunk</div>
         <div class="map-legend-item"><span class="map-legend-swatch" style="background:#ab47bc"></span> Secondary</div>
         <div class="map-legend-item"><span class="map-legend-swatch" style="background:#66bb6a"></span> Tertiary</div>
         <div class="map-legend-item"><span class="map-legend-swatch" style="background:#5c6d82"></span> Residential</div>
@@ -115,7 +135,7 @@
 
 <div class="grid">
   <div class="panel">
-    <h2>Congestion by Camera</h2>
+    <h2>Camera feed Ingestion</h2>
     <div class="stat-row" id="statRow"></div>
     <canvas id="congestionChart" height="140"></canvas>
     <table id="congestionTable">
@@ -130,6 +150,7 @@
     <div class="searchbar">
       <input id="plateInput" placeholder="e.g. KA05MH1234" />
       <button onclick="lookupPlate()">Track</button>
+      <button class="secondary" onclick="untrackRoute()">Untrack</button>
     </div>
     <div id="trajResult"></div>
 
@@ -151,11 +172,74 @@
     <div class="refresh-note">Worker heartbeat refreshes every 10s</div>
   </div>
 </div>
+<div class="grid">
+  <div class="panel wide">
+    <h2>Recent Traffic Alerts <span id="alertCount" class="badge moderate">0</span></h2>
+    <div id="alertHistory"><div class="refresh-note">No alerts in the last hour</div></div>
+  </div>
+</div>
 
 <script>
 const API = ""; // same-origin
 
 let chart;
+let knownAlertIds = new Set();
+let firstAlertLoad = true;
+
+function clearRouteLayers() {
+  if (window.nmap && window.routeLayers) {
+    window.routeLayers.forEach(layer => window.nmap.removeLayer(layer));
+    window.routeLayers = [];
+  }
+}
+
+function untrackRoute() {
+  clearRouteLayers();
+  document.getElementById('trajResult').innerHTML = '';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, character => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'
+  }[character]));
+}
+
+function showAlertToast(alert) {
+  const toast = document.createElement('div');
+  toast.className = `alert-toast ${escapeHtml(alert.severity)}`;
+  toast.innerHTML = `
+    <div class="alert-toast-head"><span>${escapeHtml(alert.alert_type.replaceAll('_', ' '))}</span>
+      <button class="alert-toast-close" aria-label="Dismiss alert">&times;</button></div>
+    <div class="alert-toast-message">${escapeHtml(alert.message)}</div>
+    <div class="alert-toast-meta">${new Date(alert.occurred_at).toLocaleTimeString()}</div>`;
+  toast.querySelector('.alert-toast-close').onclick = () => toast.remove();
+  document.getElementById('alertRail').prepend(toast);
+  setTimeout(() => toast.remove(), 9000);
+}
+
+async function loadAlerts() {
+  try {
+    const res = await fetch(`${API}/alerts?window_minutes=60&limit=20`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const history = document.getElementById('alertHistory');
+    document.getElementById('alertCount').textContent = data.length;
+    history.innerHTML = data.length ? data.map(alert => `
+      <div class="alert-history-item"><strong>${escapeHtml(alert.alert_type.replaceAll('_', ' '))}</strong>
+        <span>${escapeHtml(alert.message)}</span>
+        <small>${new Date(alert.occurred_at).toLocaleString()}${alert.plate_number ? ' • ' + escapeHtml(alert.plate_number) : ''}</small>
+      </div>`).join('') : '<div class="refresh-note">No alerts in the last hour</div>';
+
+    data.slice().reverse().forEach(alert => {
+      if (!knownAlertIds.has(alert.id) && !firstAlertLoad) showAlertToast(alert);
+      knownAlertIds.add(alert.id);
+    });
+    firstAlertLoad = false;
+  } catch (error) {
+    console.error('Failed to load alerts:', error);
+  }
+}
+
 async function loadCongestion() {
   const res = await fetch(`${API}/analytics/congestion`);
   const data = await res.json();
@@ -232,9 +316,7 @@ async function lookupPlate() {
       // Draw the trajectory route on the map
       if (window.nmap) {
         // Clear previous routes
-        if (window.routeLayers) {
-          window.routeLayers.forEach(layer => window.nmap.removeLayer(layer));
-        }
+        clearRouteLayers();
         window.routeLayers = [];
 
         let bounds = L.latLngBounds([]);
@@ -242,16 +324,39 @@ async function lookupPlate() {
           if (leg.route_coords && leg.route_coords.length > 0) {
             // route_coords is [[lon, lat], ...], Leaflet expects [lat, lon]
             const latlngs = leg.route_coords.map(c => [c[1], c[0]]);
-            const color = leg.is_overspeed ? '#ef5350' : '#4fc3f7';
+            const color = '#ffd166';
             
             // Draw an animated dashed line or a thick highlighted line
             const pl = L.polyline(latlngs, {
               color: color, 
               weight: 5, 
               opacity: 0.9, 
-              dashArray: '10, 10', 
               lineCap: 'round'
             }).addTo(window.nmap);
+
+            // Place directional pointers along each leg of the route.
+            const arrowMarkers = [];
+            const arrowStep = Math.max(1, Math.floor(latlngs.length / 4));
+            for (let i = arrowStep; i < latlngs.length; i += arrowStep) {
+              const previous = latlngs[Math.max(0, i - 2)];
+              const current = latlngs[i];
+              const next = latlngs[Math.min(latlngs.length - 1, i + 2)];
+              // Project the local tangent into the actual Leaflet viewport so
+              // zoom, latitude scaling, and screen y-direction are all exact.
+              const previousPoint = window.nmap.latLngToContainerPoint(previous);
+              const nextPoint = window.nmap.latLngToContainerPoint(next);
+              const angle = Math.atan2(nextPoint.y - previousPoint.y, nextPoint.x - previousPoint.x) * 180 / Math.PI;
+              const arrow = L.marker(current, {
+                icon: L.divIcon({
+                  className: 'route-arrow',
+                  html: `<span style="display:block; transform:rotate(${angle}deg);">➤</span>`,
+                  iconSize: [20, 20],
+                  iconAnchor: [10, 10]
+                }),
+                interactive: false
+              }).addTo(window.nmap);
+              arrowMarkers.push(arrow);
+            }
             
             // Add markers for the start and end of this leg
             const startMarker = L.circleMarker(latlngs[0], {radius: 6, color: '#fff', fillColor: color, fillOpacity: 1}).addTo(window.nmap);
@@ -260,7 +365,7 @@ async function lookupPlate() {
             startMarker.bindPopup(`<b>${leg.from_camera}</b>`);
             endMarker.bindPopup(`<b>${leg.to_camera}</b>`);
 
-            window.routeLayers.push(pl, startMarker, endMarker);
+            window.routeLayers.push(pl, ...arrowMarkers, startMarker, endMarker);
             bounds.extend(pl.getBounds());
           }
         });
@@ -276,10 +381,11 @@ async function lookupPlate() {
   }
 }
 
-loadCongestion(); loadOverspeed(); loadIngestionStatus();
+loadCongestion(); loadOverspeed(); loadIngestionStatus(); loadAlerts();
 setInterval(loadCongestion, 10000);
 setInterval(loadOverspeed, 10000);
 setInterval(loadIngestionStatus, 10000);
+setInterval(loadAlerts, 5000);
 
 // ─── Road Network Map (Leaflet) ────────────────────────────────
 (function initNetworkMap() {
@@ -289,8 +395,8 @@ setInterval(loadIngestionStatus, 10000);
   function roadColor(hw) {
     if (!hw) return '#4fc3f7';
     const h = Array.isArray(hw) ? hw[0] : hw;
-    return { motorway:'#ff7043',trunk:'#ff7043',primary:'#ff7043',
-             motorway_link:'#ff7043',trunk_link:'#ff7043',primary_link:'#ff7043',
+    return { motorway:'#8b0000',trunk:'#8b0000',primary:'#8b0000',
+         motorway_link:'#8b0000',trunk_link:'#8b0000',primary_link:'#8b0000',
              secondary:'#ab47bc',secondary_link:'#ab47bc',
              tertiary:'#66bb6a',tertiary_link:'#66bb6a',
              residential:'#5c6d82',living_street:'#5c6d82',service:'#5c6d82',
@@ -323,7 +429,7 @@ setInterval(loadIngestionStatus, 10000);
       if (!res.ok) return;
       const geojson = await res.json();
       const roadLayer = L.geoJSON(geojson, {
-        style: f => ({ color: roadColor(f.properties.highway), weight: roadWeight(f.properties.highway), opacity: 0.85, lineJoin:'round', lineCap:'round' }),
+        style: f => ({ color: roadColor(f.properties.highway), weight: roadWeight(f.properties.highway), opacity: 0.85, dashArray: null, lineJoin:'round', lineCap:'round' }),
         onEachFeature: (f, layer) => {
           const p = f.properties, name = p.name||'Unnamed road',
                 type = Array.isArray(p.highway)?p.highway.join(', '):(p.highway||'\u2014'),

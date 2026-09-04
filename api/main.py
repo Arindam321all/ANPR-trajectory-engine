@@ -16,6 +16,7 @@ from db import database
 from tracking import trajectory_engine, routing
 from analytics import traffic_analytics
 from config_loader import get_config, all_camera_ids, get_camera
+from alerting import alert_engine
 
 app = FastAPI(
     title="City-Wide ANPR Trajectory & Traffic Analytics API",
@@ -151,6 +152,13 @@ def loitering(plate: str):
 @app.get("/analytics/summary")
 def summary(window_minutes: int = 60):
     return traffic_analytics.city_summary(window_minutes)
+
+
+@app.get("/alerts")
+def alerts(window_minutes: int = 60, alert_type: str | None = None,
+           limit: int = Query(100, ge=1, le=1000)):
+    """Recent rule violations, including delivery status and evidence."""
+    return alert_engine.recent_alerts(window_minutes, alert_type, limit)
 
 
 @app.get("/watchlist/check/{plate}")

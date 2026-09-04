@@ -20,6 +20,7 @@ from config_loader import get_camera, get_config
 from detection.plate_detector import PlateDetector, VehicleDetector
 from detection.ocr_reader import OCRReader, validate_plate
 from db import database
+from alerting import alert_engine
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,14 @@ class CameraTracker:
                 return v["type"]
         return None
 
-    def process_frame(self, frame) -> list[dict]:
+    def process_frame(self, frame, event_context: dict | None = None) -> list[dict]:
         """Runs detection+OCR on one frame, writes new sightings to DB.
+        `event_context` can be supplied by a signal/lane vision adapter with
+        signal_state, crossed_stop_line, travel_direction, or lane_type.
         Returns the list of events logged (useful for live overlay/testing)."""
         events = []
         now = time.time()
+        event_context = event_context or {}
 
         plate_dets = self.plate_detector.detect(frame)
         if not plate_dets:
@@ -84,6 +88,10 @@ class CameraTracker:
 
             vehicle_type = self._match_vehicle_type(det.bbox, vehicles)
             timestamp = datetime.now(timezone.utc).isoformat()
+            signal_state = event_context.get("signal_state")
+            crossed_stop_line = event_context.get("crossed_stop_line")
+            travel_direction = event_context.get("travel_direction")
+            lane_type = event_context.get("lane_type")
 
             database.insert_detection(
                 plate_number=plate_text,
@@ -93,11 +101,19 @@ class CameraTracker:
                 ocr_confidence=ocr_conf,
                 bbox=det.bbox,
                 vehicle_type=vehicle_type,
+                signal_state=signal_state,
+                crossed_stop_line=crossed_stop_line,
+                travel_direction=travel_direction,
+                lane_type=lane_type,
             )
-            events.append({
-                "plate": plate_text, "camera_id": self.camera_id,
+            detection_event = {
+                "plate_number": plate_text, "camera_id": self.camera_id,
                 "timestamp": timestamp, "vehicle_type": vehicle_type,
-            })
+                "signal_state": signal_state, "crossed_stop_line": crossed_stop_line,
+                "travel_direction": travel_direction, "lane_type": lane_type,
+            }
+            alert_engine.evaluate_detection(detection_event)
+            events.append(detection_event)
             logger.info("[%s] detected plate %s (%.2f)", self.camera_id, plate_text, ocr_conf)
 
         return events
