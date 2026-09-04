@@ -75,6 +75,43 @@ Then open `dashboard/index.html` (served by the API at `/`) in a browser.
 | `GET /analytics/overspeed` | List of trajectory legs exceeding speed limit |
 | `GET /analytics/summary` | City-wide dashboard summary stats |
 
+## Switching to PostgreSQL (for large-scale deployments)
+
+By default the engine uses SQLite (`city_anpr.db`), which is fine for a demo
+or a handful of cameras but becomes a bottleneck at city scale: SQLite has a
+single effective writer, and every camera-ingestion thread plus every API
+request eventually contends on that one file.
+
+To switch to PostgreSQL, which supports many concurrent writers and pools
+connections properly:
+
+```
+pip install -r requirements.txt   # now includes psycopg2-binary
+
+# 1. Point config.yaml at your Postgres instance:
+#    database:
+#      type: "postgres"
+#      host: "localhost"
+#      port: 5432
+#      name: "anpr"
+#      user: "anpr"
+#      password: "changeme"
+
+# 2. Create the schema
+python -c "from db.backends.postgres_backend import init_db; init_db()"
+
+# 3. (optional) migrate any existing SQLite data
+python scripts/migrate_sqlite_to_postgres.py --sqlite-path city_anpr.db
+
+# 4. Run as normal -- main.py, uvicorn, etc. all pick up the new backend
+#    automatically via db/database.py, no other code changes needed.
+```
+
+No other file needs to change: `db/database.py` picks the active backend
+from `config.yaml`, and every read/write function (`insert_detection`,
+`get_trajectory_legs_for_plate`, etc.) has an identical signature and
+dict-like row shape on both backends.
+
 ## Notes on production hardening
 
 - Swap SQLite for Postgres/TimescaleDB at city scale (see `db/database.py` — the SQL is
