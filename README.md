@@ -64,6 +64,22 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 
 Then open `dashboard/index.html` (served by the API at `/`) in a browser.
 
+## Upload video footage
+
+The dashboard's **Process Video Footage** panel accepts `.mp4`, `.avi`, `.mov`,
+`.mkv`, and `.webm` files up to 500 MB. Select the camera context for the
+footage and upload it; the API queues the file and runs the same detector,
+OCR, database, and alert pipeline used for camera feeds. Processing progress
+is shown in the dashboard, and detections appear in the existing analytics
+views when the job completes.
+
+The upload API is also available directly with multipart form data:
+
+```bash
+curl -F "file=@footage.mp4" -F "camera_id=CAM_001" http://localhost:8000/uploads/videos
+curl http://localhost:8000/uploads/videos/<job_id>
+```
+
 ## Key API endpoints
 
 | Endpoint | Description |
@@ -76,6 +92,8 @@ Then open `dashboard/index.html` (served by the API at `/`) in a browser.
 | `GET /analytics/overspeed` | List of trajectory legs exceeding speed limit |
 | `GET /analytics/summary` | City-wide dashboard summary stats |
 | `GET /alerts?window_minutes=60` | Recent rule violations and notification status |
+| `POST /uploads/videos` | Queue uploaded video footage for ANPR processing |
+| `GET /uploads/videos/{job_id}` | Read uploaded-video processing status |
 
 ## Configure enforcement rules
 

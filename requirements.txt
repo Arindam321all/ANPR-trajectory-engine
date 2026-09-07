@@ -3,6 +3,7 @@ easyocr>=1.7.1             # OCR for reading plate text
 opencv-python>=4.9.0
 numpy>=1.26.0
 fastapi>=0.111.0
+python-multipart>=0.0.9
 uvicorn>=0.29.0
 pyyaml>=6.0.1
 python-dateutil>=2.9.0

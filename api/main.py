@@ -5,9 +5,14 @@ REST API for the ANPR engine. Run with:
 Serves the dashboard at "/" and JSON analytics under "/analytics/*",
 raw data under "/detections" and "/trajectory/*".
 """
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+import logging
 from pathlib import Path
+import threading
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +22,7 @@ from tracking import trajectory_engine, routing
 from analytics import traffic_analytics
 from config_loader import get_config, all_camera_ids, get_camera
 from alerting import alert_engine
+from tracking.camera_tracker import CameraTracker
 
 app = FastAPI(
     title="City-Wide ANPR Trajectory & Traffic Analytics API",
@@ -30,6 +36,13 @@ app.add_middleware(
 
 DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"
 MAP_DIR = Path(__file__).parent.parent / "map"
+UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="uploaded-video")
+upload_jobs = {}
+upload_jobs_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 app.mount("/map", StaticFiles(directory=MAP_DIR), name="map")
 
@@ -37,6 +50,82 @@ app.mount("/map", StaticFiles(directory=MAP_DIR), name="map")
 @app.on_event("startup")
 def startup():
     database.init_db()
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _update_upload_job(job_id: str, **updates):
+    with upload_jobs_lock:
+        if job_id in upload_jobs:
+            upload_jobs[job_id].update(updates)
+
+
+def _process_uploaded_video(job_id: str, video_path: Path, camera_id: str):
+    try:
+        _update_upload_job(job_id, status="processing", started_at=datetime.now(timezone.utc).isoformat())
+        tracker = CameraTracker(camera_id)
+
+        def progress(frames_read, detections_logged, last_frame_at):
+            _update_upload_job(job_id, frames_read=frames_read,
+                               detections_logged=detections_logged,
+                               last_frame_at=last_frame_at)
+
+        if not tracker.run(source_override=str(video_path), on_progress=progress, replay=False):
+            raise RuntimeError("Video source could not be opened")
+        _update_upload_job(job_id, status="completed", completed_at=datetime.now(timezone.utc).isoformat())
+    except Exception as exc:
+        logger.exception("Uploaded video job %s failed", job_id)
+        _update_upload_job(job_id, status="failed", error=str(exc),
+                           completed_at=datetime.now(timezone.utc).isoformat())
+    finally:
+        video_path.unlink(missing_ok=True)
+
+
+@app.post("/uploads/videos", status_code=202)
+async def upload_video(file: UploadFile = File(...), camera_id: str = Form(...)):
+    """Queue one uploaded video for processing through the ANPR pipeline."""
+    try:
+        get_camera(camera_id)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Unknown camera_id: {camera_id}")
+
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported video format")
+
+    job_id = uuid4().hex
+    video_path = UPLOAD_DIR / f"{job_id}{extension}"
+    size = 0
+    try:
+        with video_path.open("wb") as destination:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="Video exceeds the 500 MB limit")
+                destination.write(chunk)
+    except Exception:
+        video_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    job = {
+        "job_id": job_id, "filename": file.filename, "camera_id": camera_id,
+        "status": "queued", "frames_read": 0, "detections_logged": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with upload_jobs_lock:
+        upload_jobs[job_id] = job
+    upload_executor.submit(_process_uploaded_video, job_id, video_path, camera_id)
+    return job
+
+
+@app.get("/uploads/videos/{job_id}")
+def upload_video_status(job_id: str):
+    with upload_jobs_lock:
+        job = upload_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+    return job
 
 
 @app.get("/")

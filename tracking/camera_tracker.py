@@ -118,11 +118,12 @@ class CameraTracker:
 
         return events
 
-    def run(self):
+    def run(self, source_override: str | None = None, on_progress=None, replay: bool = True):
         """Blocking loop — reads the camera source until it ends/disconnects.
         For RTSP streams this runs indefinitely; for demo video files it
-        plays through once, then replays one more time before stopping."""
-        source = self.camera_cfg["source"]
+        plays through once, then replays one more time before stopping.
+        ``source_override`` is used by uploaded-video jobs."""
+        source = source_override or self.camera_cfg["source"]
         started_at = datetime.now(timezone.utc).isoformat()
         frames_read = 0
         detections_logged = 0
@@ -135,7 +136,7 @@ class CameraTracker:
             database.upsert_camera_status(self.camera_id, "error", source=source,
                                           started_at=started_at, error="Source could not be opened")
             logger.error("[%s] failed to open source: %s", self.camera_id, source)
-            return
+            return False
 
         frame_idx = 0
         has_looped = False  # tracks whether we've already used our one replay
@@ -144,7 +145,7 @@ class CameraTracker:
             while True:
                 ret, frame = cap.read()
                 if not ret:
-                    if not has_looped:
+                    if replay and not has_looped:
                         has_looped = True
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         logger.info("[%s] reached end of file, replaying once", self.camera_id)
@@ -161,6 +162,8 @@ class CameraTracker:
                         last_frame_at=last_frame_at, frames_read=frames_read,
                         detections_logged=detections_logged,
                     )
+                    if on_progress:
+                        on_progress(frames_read, detections_logged, last_frame_at)
                     continue
                 try:
                     events = self.process_frame(frame)
@@ -172,6 +175,8 @@ class CameraTracker:
                         last_frame_at=last_frame_at, last_detection_at=last_detection_at,
                         frames_read=frames_read, detections_logged=detections_logged,
                     )
+                    if on_progress:
+                        on_progress(frames_read, detections_logged, last_frame_at)
                 except Exception:
                     database.upsert_camera_status(
                         self.camera_id, "error", source=source, started_at=started_at,
@@ -187,3 +192,4 @@ class CameraTracker:
                 last_frame_at=last_frame_at, last_detection_at=last_detection_at,
                 frames_read=frames_read, detections_logged=detections_logged,
             )
+        return True

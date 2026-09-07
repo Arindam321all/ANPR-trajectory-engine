@@ -41,6 +41,9 @@
   .stat .num { font-size:22px; font-weight:700; }
   .stat .label { font-size:11px; color:var(--muted); text-transform:uppercase; }
   .refresh-note { color:var(--muted); font-size:11px; margin-top:8px; }
+  .upload-form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .upload-form input[type=file], .upload-form select { flex:1; min-width:180px; background:#0d1218; border:1px solid var(--border); color:var(--text); padding:9px 12px; border-radius:8px; font-size:13px; }
+  .upload-progress { margin-top:12px; color:var(--muted); font-size:12px; min-height:18px; }
   .wide { grid-column:1 / -1; }
   .state { display:inline-flex; align-items:center; gap:6px; font-weight:600; text-transform:capitalize; }
   .state::before { content:''; width:7px; height:7px; border-radius:50%; background:var(--muted); }
@@ -130,6 +133,18 @@
       <span>Coverage: <b class="val" id="mapCoverage">—</b></span>
       <span>Centre: <b class="val" id="mapCentre">—</b></span>
     </div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="panel wide">
+    <h2>Process Video Footage</h2>
+    <form id="uploadForm" class="upload-form">
+      <input id="videoFile" type="file" accept="video/mp4,video/avi,video/quicktime,video/x-matroska,video/webm" required />
+      <select id="uploadCamera" required aria-label="Camera context"></select>
+      <button id="uploadButton" type="submit">Upload &amp; Process</button>
+    </form>
+    <div id="uploadProgress" class="upload-progress"></div>
   </div>
 </div>
 
@@ -294,6 +309,64 @@ async function loadIngestionStatus() {
   `).join('');
 }
 
+async function loadUploadCameras() {
+  const select = document.getElementById('uploadCamera');
+  try {
+    const res = await fetch(`${API}/cameras`);
+    if (!res.ok) throw new Error('Camera list unavailable');
+    const cameras = await res.json();
+    select.innerHTML = cameras.map(camera =>
+      `<option value="${escapeHtml(camera.id)}">${escapeHtml(camera.name)} (${escapeHtml(camera.id)})</option>`
+    ).join('');
+  } catch (error) {
+    select.innerHTML = '<option value="">Unable to load cameras</option>';
+    document.getElementById('uploadProgress').textContent = error.message;
+  }
+}
+
+async function pollUploadJob(jobId, filename) {
+  const progress = document.getElementById('uploadProgress');
+  const response = await fetch(`${API}/uploads/videos/${jobId}`);
+  if (!response.ok) throw new Error('Could not read processing status');
+  const job = await response.json();
+  progress.textContent = `${filename}: ${job.status} | ${job.frames_read || 0} frames | ${job.detections_logged || 0} detections`;
+  if (job.status === 'queued' || job.status === 'processing') {
+    setTimeout(() => pollUploadJob(jobId, filename).catch(error => {
+      progress.textContent = error.message;
+    }), 1500);
+  } else if (job.status === 'completed') {
+    document.getElementById('uploadButton').disabled = false;
+    loadCongestion(); loadOverspeed(); loadIngestionStatus(); loadAlerts();
+  } else {
+    document.getElementById('uploadButton').disabled = false;
+    progress.textContent += ` | ${job.error || 'Processing failed'}`;
+  }
+}
+
+document.getElementById('uploadForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const fileInput = document.getElementById('videoFile');
+  const camera = document.getElementById('uploadCamera').value;
+  const progress = document.getElementById('uploadProgress');
+  const button = document.getElementById('uploadButton');
+  if (!fileInput.files.length || !camera) return;
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  formData.append('camera_id', camera);
+  button.disabled = true;
+  progress.textContent = `Uploading ${fileInput.files[0].name}...`;
+  try {
+    const response = await fetch(`${API}/uploads/videos`, { method:'POST', body:formData });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || 'Upload failed');
+    fileInput.value = '';
+    pollUploadJob(result.job_id, result.filename);
+  } catch (error) {
+    button.disabled = false;
+    progress.textContent = error.message;
+  }
+});
+
 async function lookupPlate() {
   const plate = document.getElementById('plateInput').value.trim().toUpperCase();
   const box = document.getElementById('trajResult');
@@ -381,6 +454,7 @@ async function lookupPlate() {
   }
 }
 
+loadUploadCameras();
 loadCongestion(); loadOverspeed(); loadIngestionStatus(); loadAlerts();
 setInterval(loadCongestion, 10000);
 setInterval(loadOverspeed, 10000);
